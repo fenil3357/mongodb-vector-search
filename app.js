@@ -4,6 +4,7 @@ import * as dotenv from 'dotenv'
 
 import { generateEmbeddings } from "./openai.js";
 import ContentModel from "./content.model.js";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 dotenv.config();
 
@@ -37,7 +38,7 @@ app.post('/search', async (req, res) => {
     const { query, k = 5 } = req?.body;
 
     const queryVector = await generateEmbeddings(query);
-    
+
     const results = await ContentModel.aggregate([
       {
         $vectorSearch: {
@@ -58,7 +59,29 @@ app.post('/search', async (req, res) => {
         }
       }
     ]);
-    return res.json(results);
+
+    // Generate answer with AI
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.0-flash'
+    });
+    const prompt = `
+    Provide answer of my question based on given text provided.
+    Question : ${query},
+    Text : ${results.map(r => r.text).join('. ')}.
+    Please provide answer in proper markdown format, Use bullet points if required.
+    `;
+
+    const result = await model.generateContentStream(prompt);
+    res.setHeader("Content-Type", "text/plain");
+
+    for await (const chunk of result.stream) {
+      const text = chunk.text();
+      if (text) {
+        res.write(text);
+      }
+    }
+    return res.end();
   } catch (error) {
     console.log("🚀 ~ app.get ~ error:", error)
     return res.status(500).json(error);
